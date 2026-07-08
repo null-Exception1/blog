@@ -1029,6 +1029,18 @@ volumes:
 Most learning the fact that nextjs is NOT easy to export.
 
 
-My Postgres Instance right now is hosted on Neon, Go backend is on Render, and Next-JS is on Vercel. Overall i had 0 difficulties even trying to deploy, it seems like theyre almost built for fullstack apps like mine, but honestly i kind of wish i hadnt spread the workload between 3 different services. I would've liked to learn microservices if i had access to spin up some docker containers 24/7.
+My Postgres Instance right now is hosted on Neon, Go backend is on Render, and Next-JS is on Vercel. Overall i had 0 difficulties even trying to deploy, it seems like theyre almost built for fullstack apps like mine, but honestly i kind of wish i hadnt spread the workload between 3 different services. I would've liked to have my docker compose up and running if i had access to spin up some docker containers 24/7.
 
+
+## Conclusion
+
+
+yeah this project was dope lol
+
+if anything i'm definitely going to try to implement sharding on my own or even cache sharding.
+
+but for now i think this is enough.
+
+
+alright bye.
 
