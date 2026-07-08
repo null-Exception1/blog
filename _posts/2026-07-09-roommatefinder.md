@@ -700,7 +700,7 @@ if __name__ == "__main__":
 
 So now we'll go step by step in the optimizations I added.
 
-## Caching (for /blocks)
+## 1. Caching (for /blocks)
 
 >Refresh the page 1000 times, or give 1000 people 1 refresh... no difference.
 
@@ -801,28 +801,8 @@ func CacheUpdate(){
 
 And then the thing took off like a rocket:
 
----
 
-### Without Caching
-
-| Benchmark | Iterations | Time/op | Bytes/op | Allocs/op |
-| :--- | :---: | :---: | :---: | :---: |
-| **BlocksHandler** | 2877 | 388,047 ns | 258,546 | 2207 |
-| **RoomsBlocksHandler** | 1,000,000,000 | 0.0009717 ns | 0 | 0 |
-
----
-
-### With Caching
-
-| Benchmark | Iterations | Time/op | Bytes/op | Allocs/op |
-| :--- | :--- | :--- | :--- | :--- |
-| BlocksHandler | 28 | 54,649,916 ns | 17,629,019 | 459,798 |
-| RoomsBlocksHandler | 1,000,000,000 | 0.02232 ns | 0 | 0 |
-
-
----
-
-### Removed json.Marshal overhead (caching)
+## Removed json.Marshal overhead (caching)
 
 | Benchmark                  | Iterations | Time/op      | Bytes/op | Allocs/op |
 |----------------------------|------------|--------------|----------|-----------|
@@ -831,8 +811,224 @@ And then the thing took off like a rocket:
 
 ---
 
+This number... 0.0003799 ns this is the kind of latency i expected from Go. 
+
+Honestly felt kind of good about myself after that.
+
+## 2. Worker Pools + Caching for /rooms
+
+The most interesting part about /rooms is that each block number needs to have their own cache. This cache as we discussed earlier need be JSON.Marshal, but there was also something i noticed very early on while implementing caching - we can have multiple workers update the cache of different blocks.
+
+Each block essentially acts as an independent cacher by itself so we keep track of those expiries in a dictionary.
+
+Now the general case for our caching rooms looked like this
+
+```go
+
+// For caching rooms : block -> room number -> structs.Room
+var CacheRooms map[string]map[string]*structs.Room = make(map[string]map[string]*structs.Room, 0)
+var CachedRoomsJSON map[string]string = make(map[string]string, 0)
+
+// Per block expiry time
+var CacheBlocksExpiry map[string]time.Time = make(map[string]time.Time, 0)
+var CacheRoomsMutex sync.RWMutex
+
+```
+
+The results of caching for /rooms wasn't very interesting - partially because they were small fetched results and i couldn't really figure out a way to stress test cacheing without a meaningful difference in the time saved.
+
+So anyways onto the WorkerPool implementation -
+
+```go
+package structs
+
+type RoomsJob struct { 
+	Blockno string
+}
+
+type RoomsJobResult struct {
+	Blockno string
+	JSON    string
+}
+```
+
+The essential de-mystified idea of having workers is having jobs to assign them to, so they can achieve tasks parallel-y. Now my initial bottleneck with doing workerpools was that there was VIRTUALLY NO DIFFERENCE IN THE TIME SAVE.
+
+My initial idea was to have a worker that is given a Job to update the cache of a certain 'block number', and it would straight away update the cache when it was done generating the result from the DB.
+
+The same sync Locks that it required to ensure that the cache data was safeguarded from a race condition - made it so that concurrent instances of workers had to actually line up enough to bottleneck on a single worker's work. So it essentially became a queue where the workers had to still sit in line and not pick up new jobs after being done with their previous ones.
 
 
+Pretty crazy right?
 
+
+### Fan-in/Fan-out implementation
+
+>Give jobs, take results, only one goroutine is allowed to look at the results
+
+This is a fucking amazing optimization right here - basically when our workers are done with a job, they no longer have to wait for anything to update the cache. They pass it to a channel called **results**.
+
+The **results** channel is now taken care of by only ONE goroutine, so that means, severely less locking, and incredible cache refreshing times.
+
+```go
+
+func WorkersResults() {
+	for result := range globals.CacheRoomsJobsResults {
+		logrus.WithFields(logrus.Fields{
+			"package":       "routine",
+			"resultblockno": result.Blockno,
+			"resultlen":     len(result.JSON),
+		}).Debug("updating cache with result from worker")
+		globals.CachedRoomsJSON.Store(result.Blockno, result.JSON)
+		//<-globals.CacheRoomsJobsResults
+	}
+}
+```
+
+This is the even more insane part - Go comes with it's own library for sync Maps that handle locking and unlocking for you. In fact, they're well built to accomodate it.
+
+So now our entire code has become
+
+```go
+// in func main()
+for range globals.NumWorkers { // we started all our workers for infinite time.
+		globals.CacheRoomsJobsWaitGroup.Go(func() {
+			for job := range globals.CacheRoomsJobs {
+				caching.CacheRoomsUpdate(job.Blockno)
+			}
+		})
+	}
+
+go goroutines.WorkersResults() // started our result cleanup at the same time
+
+```
+```go
+// Cache update trigger
+func AddCacheRoomsJob(blockno string) {
+	globals.CacheRoomsJobs <- structs.RoomsJob{Blockno: blockno} // updating cache now means just adding a job to queue
+}
+```
+```go
+
+// Cache update result
+rooms := FormRooms(blockno)
+
+bytes, _ := json.Marshal(rooms)
+
+globals.CacheRoomsJobsResults <- structs.RoomsJobResult{Blockno: blockno, JSON: string(bytes)}
+
+globals.CacheBlocksExpiry.Store(blockno, time.Now().Add(globals.CacheRoomsSeconds*time.Second))
+```
+
+So overall our entire benchmark has dropped.. let us compare the worker wise distributions
+
+
+`const NumWorkers = 1`
+
+goos: linux
+goarch: amd64
+pkg: golang/benchmarks/simplefetch
+cpu: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz
+BenchmarkRoomsBlocksHandler-12  2705 req/s           13353 B/op        124 allocs/op
+PASS
+ok      golang/benchmarks/simplefetch   28.848s
+
+`const NumWorkers = 50`
+goos: linux
+goarch: amd64
+pkg: golang/benchmarks/simplefetch
+cpu: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz
+BenchmarkRoomsBlocksHandler-12  25360 req/s 85 allocs/op
+PASS
+ok      golang/benchmarks/simplefetch   14.656s
+
+
+Anything beyond 50 the workers start to crowd, it becomes like that old saying
+
+>Too many chefs spoil the broth
+
+
+## Cryptography
+
+
+Nothing special here but an honourable mention to our backend and frontend hashing
+
+```go
+admnno := q.Get("admn_hash")
+admn_hash := globals.SecureHash(admnno, os.Getenv("PEPPER"))
+```
+
+```jsx
+const encoder = new TextEncoder();
+const data = encoder.encode(admnno); // concat admnno
+const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+const hashArray = Array.from(new Uint8Array(hashBuffer));
+const hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+
+const queryParams = new URLSearchParams({
+	admn_hash: hashHex,
+	name: name
+});
+```
+
+## Dockerization & Deployment
+
+So for the sake of it i learnt enough docker to launch containers for my db, go backend and frontend.
+
+```
+services:
+  postgres:
+    image: postgres:16
+    container_name: pg-roommate
+    restart: always
+    environment:
+      POSTGRES_USER: devuser
+      POSTGRES_PASSWORD: devpass
+      POSTGRES_DB: roommatefinder
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  golang:
+    build: ./golang
+    container_name: go-backend
+    restart: always
+    environment:
+      DATABASE_URL: postgres://devuser:devpass@postgres:5432/roommatefinder?sslmode=disable
+      LOG_FORMAT: text
+      LOG_LEVEL: debug
+      CACHING: true
+      PEPPER: prabhansharularegaytogether
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      
+  roomate-finder:
+    build: ./roomate-finder
+    container_name: nextjs-frontend
+    restart: always
+    command: npm run dev
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+      SERVER_API_URL: http://go-backend:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - golang
+    volumes:
+      - ./roomate-finder:/app 
+      - /app/node_modules
+
+volumes:
+  pgdata:
+```
+
+Most learning the fact that nextjs is NOT easy to export.
+
+
+My Postgres Instance right now is hosted on Neon, Go backend is on Render, and Next-JS is on Vercel. Overall i had 0 difficulties even trying to deploy, it seems like theyre almost built for fullstack apps like mine, but honestly i kind of wish i hadnt spread the workload between 3 different services. I would've liked to learn microservices if i had access to spin up some docker containers 24/7.
 
 
