@@ -162,3 +162,7 @@ So the reason why it was purely written as "Admnno" in the struct was because i 
 ## Version 2: Sessions and Login
 
 >So the idea is simple, as soon as a user logs in or registers, give them a session ID cookie which for the duration of validity can be used to automatically stay logged in
+
+Easy to say, hard to manage.
+
+The main problem was the CORS that absolutely refused the living hell out of placing a cookie on a god forbid user.
