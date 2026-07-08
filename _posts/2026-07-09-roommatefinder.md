@@ -745,18 +745,22 @@ Environment
 
 ---
 
-Without Caching
+### Without Caching
+
 | Benchmark | Iterations | Time/op | Bytes/op | Allocs/op |
 | :--- | :---: | :---: | :---: | :---: |
 | **BlocksHandler** | 2,877 | 388,047 ns | 258,546 | 2,207 |
 | **RoomsBlocksHandler** | 1,000,000,000 | 0.0009717 ns | 0 | 0 |
+
 ---
 
-With Caching
+### With Caching
+
 | Benchmark | Iterations | Time/op | Bytes/op | Allocs/op |
 | :--- | :---: | :---: | :---: | :---: |
 | **BlocksHandler** | 28 | 54,649,916 ns | 17,629,019 | 459,798 |
 | **RoomsBlocksHandler** | 1,000,000,000 | 0.02232 ns | 0 | 0 |
+
 ---
 
 Infact the first time i tried caching, the ns/op went up, although the time was still lower than going for a fetch.
