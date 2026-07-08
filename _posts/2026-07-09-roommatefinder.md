@@ -747,8 +747,8 @@ You see this is not a good idea when you check benchmarks - time for cache fetch
 
 ### Without Caching
 | Benchmark                  | Iterations | Time/op      | Bytes/op | Allocs/op |
-|----------------------------|------------|--------------|----------|-----------|
-| **BlocksHandler**          | 2877       | 388,047 ns   | 258,546  | 2207      |
+|----------------------------|------------   |--------------|----------|-----------|
+| **BlocksHandler**          | 2877          | 388,047 ns   | 258,546  | 2207      |
 | **RoomsBlocksHandler**     | 1,000,000,000 | 0.0009717 ns | 0        | 0         |
 
 ---
@@ -770,8 +770,8 @@ Turns out, JSONifying a dictionary is not worth it when you have to do it everyt
 
 ```go
 if time.Now().After(globals.CacheExpiry) {
-		caching.CacheUpdate()
-	}
+	caching.CacheUpdate()
+}
 globals.CacheMutex.RLock()
 str, err := json.Marshal(globals.CacheBlocks) // We have to Marshal it everytime we retrieve the Cache (Bottleneck)
 globals.CacheMutex.RUnlock()
@@ -799,7 +799,10 @@ func CacheUpdate(){
 
 And then the thing took off like a rocket:
 
+---
+
 ### Without Caching
+
 | Benchmark                  | Iterations | Time/op      | Bytes/op | Allocs/op |
 |----------------------------|------------|--------------|----------|-----------|
 | **BlocksHandler**          | 2877       | 388,047 ns   | 258,546  | 2207      |
