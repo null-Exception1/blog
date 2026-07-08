@@ -164,6 +164,9 @@ So the reason why it was purely written as "Admnno" in the struct was because i 
 ## Block
 
 ```go
+Occupancies := make(map[string]map[string]int, 0)
+rows := db.Query("SELECT * FROM people", globals.Globaldb)
+
 Block := make(map[string]*structs.Block, 0)
 
 for _, row := range rows {
@@ -174,6 +177,8 @@ for _, row := range rows {
 		Occupancies[row.Blockno][row.Roomno] = 1
 	}
 }
+
+Block := make(map[string]*structs.Block, 0)
 
 for key := range Occupancies {
 	Block[key] = &structs.Block{Partial: 0, Full: 0}
@@ -356,5 +361,471 @@ INFO[2026-07-08T18:40:38Z] response sent                                 endpoin
 INFO[2026-07-08T18:40:38Z] no matching session found in db               endpoint=/verify package=handlers token=a452f271b62de95d2bc7af2a3cb45d53
 ```
 
-I know.. it looks amazing. 
+I know.. it looks amazing. Simply being able to locate an error in processing or having a LOG stored of it is a huge advantage in debugging and reducing a LOT of debugging time.
+
+## Testing
+
+So the project is pretty big at this point. Debugging is getting still progressively difficult. At this point I had even more difficult things. I also needed a test to make sure at any point of the process, we didn't mess up what already worked.
+
+```go
+
+func TestSignupflow(t *testing.T) {
+	godotenv.Load("../../.env")
+
+	initiation.Database()
+
+	// registration flow
+	logrus.Info("/registration testing in progress..")
+
+	req := httptest.NewRequest("GET", "/registration?admnno=69&name=Shaurya&social=discordusername&socialtype=Discord&blockno=16&roomno=123&created_at=now", nil)
+
+	w := httptest.NewRecorder()
+
+	handlers.RegistrationHandler(w, req)
+
+	resp := w.Result()
+	body := w.Body.String()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	if body != "done" {
+		t.Errorf("expected 'done', got %q", body)
+	}
+	cookies := resp.Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("expected a cookie, got none")
+	}
+	token := cookies[0].Value
+
+	logrus.Info("/registration testing in complete..")
+
+	defer func() {
+		globals.Globaldb.Exec("DELETE FROM people WHERE admn_hash='69'")
+		globals.Globaldb.Exec("DELETE FROM sessions WHERE admnno='69'")
+	}()
+
+	logrus.Info("got token as (assume its not malformed) ", token)
+
+	logrus.Info("/verify testing in progress..")
+
+	req = httptest.NewRequest("GET", "/verify", nil)
+	req.AddCookie(&http.Cookie{Name: "sess_id", Value: token})
+	w = httptest.NewRecorder()
+
+	handlers.Verify(w, req)
+
+	resp = w.Result()
+	body = w.Body.String()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	if body != "valid" {
+		t.Errorf("expected 'valid', got %q", body)
+	}
+
+	logrus.Info("/verify ended..")
+
+	// logout flow
+	logrus.Info("/logout testing in progress..")
+
+	req = httptest.NewRequest("GET", "/logout", nil)
+
+	req.AddCookie(&http.Cookie{Name: "sess_id", Value: token})
+	w = httptest.NewRecorder()
+
+	handlers.Logout(w, req)
+
+	resp = w.Result()
+	body = w.Body.String()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	if body != "logged out" {
+		t.Errorf("expected 'logged out', got %q", body)
+	}
+
+	logrus.Info("/logout testing complete..")
+
+	// login flow
+	logrus.Info("/login testing in progress..")
+
+	req = httptest.NewRequest("GET", "/login?admn_hash=69&name=Shaurya", nil)
+
+	w = httptest.NewRecorder()
+
+	handlers.Login(w, req)
+
+	resp = w.Result()
+	body = w.Body.String()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	if body == "not found" {
+		t.Errorf("expected token, got %q", body)
+	}
+
+	logrus.Info("/login testing complete..")
+
+}
+```
+
+It's pretty elegant. It tests the entire sign up flow with log out, session validity and verification. This is just to make sure that when i add the **caching mechanisms**, i was going to not give up any more time trying to fix something in a project as big as this, especially in a language i spent only 3 days learning through gobyexample.com
+
+*Registration handler*
+```go
+
+func TestRegistrationHandler(t *testing.T) {
+	if err := godotenv.Load("../../.env"); err != nil {
+		t.Fatalf("failed to load .env: %v", err)
+	}
+	initfuncs.Database()
+
+	req := httptest.NewRequest("GET",
+		"/registration?admnno=69&name=Shaurya&social=discordusername&socialtype=Discord&blockno=16&roomno=123&created_at=now",
+		nil)
+	w := httptest.NewRecorder()
+
+	handlers.RegistrationHandler(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if w.Body.String() != "done" {
+		t.Errorf("expected 'done', got %q", w.Body.String())
+	}
+
+	cookies := resp.Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("expected a cookie, got none")
+	}
+
+	if _, err := globals.Globaldb.Exec("DELETE FROM people WHERE admn_hash=$1", "69"); err != nil {
+		t.Logf("cleanup people failed: %v", err)
+	}
+	if _, err := globals.Globaldb.Exec("DELETE FROM sessions WHERE admnno=$1", "69"); err != nil {
+		t.Logf("cleanup sessions failed: %v", err)
+	}
+}
+```
+
+*Login handler*
+
+```go
+package individualflows
+
+import (
+	"golang/globals"
+	"golang/handlers"
+	initfuncs "golang/init"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/joho/godotenv"
+)
+
+func TestLoginHandler(t *testing.T) {
+	// Seed DB with a fake user first
+	godotenv.Load("../../.env")
+
+	initfuncs.Database()
+
+	_, err := globals.Globaldb.Exec(`
+    INSERT INTO people (admn_hash, name, social, socialtype, roomno, blockno)
+    VALUES ($1, $2, $3, $4, $5, $6)
+`, "69", "Shaurya", "discordusername", "Discord", 123, 16)
+
+	if err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/login?admn_hash=69&name=Shaurya", nil)
+	w := httptest.NewRecorder()
+
+	handlers.Login(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if w.Body.String() == "not found" {
+		t.Errorf("expected token, got %q", w.Body.String())
+	}
+
+	// cleanup
+	globals.Globaldb.Exec("DELETE FROM people WHERE admn_hash='69'")
+	globals.Globaldb.Exec("DELETE FROM sessions WHERE admnno='69'")
+}
+```
+
+*Logout Handler*
+```
+
+func TestLogoutHandler(t *testing.T) {
+	godotenv.Load("../../.env")
+
+	initfuncs.Database()
+	_, err := globals.Globaldb.Exec(`
+        INSERT INTO sessions (id, admnno) VALUES ($1, $2)
+    `, "a18fbd57f9bbfd0450659cb69333415f", "69")
+	if err != nil {
+		t.Fatalf("failed to insert session: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/logout", nil)
+	req.AddCookie(&http.Cookie{Name: "sess_id", Value: "a18fbd57f9bbfd0450659cb69333415f"})
+	w := httptest.NewRecorder()
+
+	handlers.Logout(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+	if w.Body.String() != "logged out" {
+		t.Errorf("expected 'logged out', got %q", w.Body.String())
+	}
+
+	// cleanup
+	globals.Globaldb.Exec("DELETE FROM sessions WHERE admnno=$1", "69")
+}
+```
+
+*Verify handler*
+```go
+
+func TestVerifyHandler(t *testing.T) {
+	// Load env + init DB
+	if err := godotenv.Load("../../.env"); err != nil {
+		t.Fatalf("failed to load .env: %v", err)
+	}
+	initfuncs.Database()
+
+	// Seed DB with a fake session
+	fakeToken := "a18fbd57f9bbfd0450659cb69333415f"
+	_, err := globals.Globaldb.Exec(`
+        INSERT INTO sessions (id, admnno, expires_at)
+        VALUES ($1, $2, NOW() + interval '1 hour')
+    `, fakeToken, "69")
+	if err != nil {
+		t.Fatalf("failed to insert session: %v", err)
+	}
+
+	// Make request with cookie
+	req := httptest.NewRequest("GET", "/verify", nil)
+	req.AddCookie(&http.Cookie{Name: "sess_id", Value: fakeToken})
+	w := httptest.NewRecorder()
+
+	handlers.Verify(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+	if w.Body.String() != "valid" {
+		t.Errorf("expected 'valid', got %q", w.Body.String())
+	}
+
+	// Cleanup
+	if _, err := globals.Globaldb.Exec("DELETE FROM sessions WHERE admnno=$1", "69"); err != nil {
+		t.Logf("cleanup failed: %v", err)
+	}
+}
+```
+
+**These are all the handlers we need to test separately** - This is more of the better depth tests which allow me to narrow down the problems. The few times where my session handling failed, these tests helped me find the problem extremely fast and elegantly.
+
+
+Although I did have to update the test at some point or another in the upgradation process, making them a bit of hindrance to my progress. But this is the price you pay for never having to go step by step for a whole day trying to figure out the problem with your code.
+
+## Benchmarking
+
+So the main problem I was actively looking forward to solving was the optimization for handling /blocks and /rooms fetch api. Obviously they're the most heavy duty workers, and they're doing the most complex tasks.
+
+I made a small script to benchtest our workers by seeding a **test_db** with 1000 fake users - 
+
+```py
+import psycopg2
+import random
+import string
+from datetime import datetime
+from faker import Faker
+
+fake = Faker()
+
+def random_hash(length=8):
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
+
+def seed_users(n=1000):
+    conn = psycopg2.connect(
+        dbname="test_db",
+        user="devuser",
+        password="devpass",
+        host="localhost",
+        port="5432"
+    )
+    cur = conn.cursor()
+
+    for i in range(n):
+        admn_hash = random_hash(12)
+        name = fake.name()
+        social = fake.user_name()
+        socialtype = random.choice(["Discord", "Twitter", "Instagram"])
+        roomno = random.randint(1, 200)
+        blockno = random.randint(1, 20)
+        created_at = datetime.now()
+
+        cur.execute("""
+            INSERT INTO people (admn_hash, name, social, socialtype, roomno, blockno, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (admn_hash, name, social, socialtype, roomno, blockno, created_at))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+    print(f"Seeded {n} users into people table.")
+
+if __name__ == "__main__":
+    seed_users(1000)
+```
+
+So now we'll go step by step in the optimizations I added.
+
+## 1. Caching (for /blocks)
+
+>Refresh the page 1000 times, or give 1000 people 1 refresh... no difference.
+
+So everyone knows the concept of caching. I made the caching mechanism myself as a good way to get a good grasp on caching and it's use cases. 
+
+Now fortunately this would allow me to dwelve deeply into sync.Mutex Locking which I was looking forward to since gobyexample.com had taught me well enough to know when I should use it. Cache is a thing that can be edited and read by multiple handlers at the same time so it'll always be need to be protected to prevent a **race condition**.
+
+So my first approach was kind of a master-class in how NOT to approach Locking. This was partially due to the fact that i underestimated the bottleneck of JSON.Marshal that managed to overshadow our results.
+
+```go
+
+if time.Now().After(globals.CacheExpiry) {
+	caching.CacheUpdate() // Cache Update
+}
+globals.CacheMutex.RLock()
+str, err := json.Marshal(globals.CacheBlocks) // Retrieve the cache
+globals.CacheMutex.RUnlock()
+
+```
+
+```go
+func CacheUpdate(){
+	// .. boring sql stuff to retrieve stuff from db to update our cache
+
+	globals.CacheMutex.Lock()
+	clear(globals.CacheBlocks) // clear cache
+	globals.CacheBlocks = Block
+	globals.CacheExpiry = time.Now().Add(30 * time.Second)
+	globals.CacheMutex.Unlock()
+
+	// ..exit 
+}
+```
+
+You see this is not a good idea when you check benchmarks - time for cache fetching went **UP** instead because of the sheer amount of locking we started doing for reading, added on with our bottleneck that i discovered later to be **JSON.Marshal**
+
+### Environment
+- **OS**: Linux  
+- **Arch**: amd64  
+- **CPU**: Intel(R) Core(TM) i7-9750H @ 2.60GHz  
+- **Go pkg**: `golang/benchmarks/simplefetch`
+
+---
+
+### Without Caching
+| Benchmark                  | Iterations | Time/op      | Bytes/op | Allocs/op |
+|----------------------------|------------|--------------|----------|-----------|
+| **BlocksHandler**          | 2877       | 388,047 ns   | 258,546  | 2207      |
+| **RoomsBlocksHandler**     | 1,000,000,000 | 0.0009717 ns | 0        | 0         |
+
+---
+
+### With Caching
+| Benchmark                  | Iterations | Time/op      | Bytes/op   | Allocs/op |
+|----------------------------|------------|--------------|------------|-----------|
+| **BlocksHandler**          | 28         | 54,649,916 ns | 17,629,019 | 459,798   |
+| **RoomsBlocksHandler**     | 1,000,000,000 | 0.02232 ns  | 0          | 0         |
+
+---
+
+Infact the first time i tried caching, the ns/op went up, although the time was still lower than going for a fetch.
+
+
+## The JSON.Marshal optimization
+
+Turns out, JSONifying a dictionary is not worth it when you have to do it everytime you recall a cache hit. That defeats the point of a cache hit, you can save on time by just saving the JSON string in the Cache instead. That's where i realised "Cache is a very flexible idea and applied in many ways, not just objects"
+
+```go
+if time.Now().After(globals.CacheExpiry) {
+		caching.CacheUpdate()
+	}
+globals.CacheMutex.RLock()
+str, err := json.Marshal(globals.CacheBlocks) // We have to Marshal it everytime we retrieve the Cache (Bottleneck)
+globals.CacheMutex.RUnlock()
+```
+
+TLDR; Turns out instead of doing
+
+DB -> Cache -> JSON.Marshal(result) -> client
+
+We shorten the run so the result is already marshalled so the end run becomes
+
+DB -> Cache -> client
+
+So the code becomes
+
+```go
+func CacheUpdate(){
+	// ...
+	globals.CacheMutex.Lock()
+	bytes, err := json.Marshal(Block)
+	globals.CachedBlocksJSON = string(bytes) // store it stringified, maximum preprocessing
+	globals.CacheMutex.Unlock()
+	//...
+```
+
+And then the thing took off like a rocket:
+
+### Without Caching
+| Benchmark                  | Iterations | Time/op      | Bytes/op | Allocs/op |
+|----------------------------|------------|--------------|----------|-----------|
+| **BlocksHandler**          | 2877       | 388,047 ns   | 258,546  | 2207      |
+| **RoomsBlocksHandler**     | 1,000,000,000 | 0.0009717 ns | 0        | 0         |
+
+---
+
+### With Caching
+| Benchmark                  | Iterations | Time/op      | Bytes/op   | Allocs/op |
+|----------------------------|------------|--------------|------------|-----------|
+| **BlocksHandler**          | 28         | 54,649,916 ns | 17,629,019 | 459,798   |
+| **RoomsBlocksHandler**     | 1,000,000,000 | 0.02232 ns  | 0          | 0         |
+
+---
+
+### Removed json.Marshal overhead (caching)
+
+| Benchmark                  | Iterations | Time/op      | Bytes/op | Allocs/op |
+|----------------------------|------------|--------------|----------|-----------|
+| **BlocksHandler**          | 3780       | 287,733 ns   | 208,379  | 1723      |
+| **RoomsBlocksHandler**     | 1,000,000,000 | 0.0003799 ns | 0        | 0         |
+
+---
+
+
+
+
+
 
