@@ -1,5 +1,5 @@
 ---
-title: How I built RoommateFinder (and my first fullstack)
+title: How I built RoommateFinder (and how i optimized it with Go)
 date: 2026-07-08 00:00:00 +0000
 categories: [Development, Go]
 tags:
