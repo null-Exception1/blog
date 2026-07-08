@@ -700,7 +700,7 @@ if __name__ == "__main__":
 
 So now we'll go step by step in the optimizations I added.
 
-## 1. Caching (for /blocks)
+## Caching (for /blocks)
 
 >Refresh the page 1000 times, or give 1000 people 1 refresh... no difference.
 
