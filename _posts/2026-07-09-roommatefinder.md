@@ -1,8 +1,12 @@
 ---
 title: How I built RoommateFinder (and my first fullstack)
 date: 2026-07-08 00:00:00 +0000
+categories: [Development, Go]
+tags:
+  - benchmarking
+  - caching
+  - performance
 ---
-# Roommate Finder
 
 So I initially got the inspiration when I saw a terribly vibe coded website from a senior from my university, at which time i was also looking for an excuse to somehow learn Next-JS framework and Go.
 It's kinda important to me that frontend should look alright so i picked NextJS for the project, and Go was my natural choice because i wanted to learn an objectively high performant language i could build a backend on.
