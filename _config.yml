@@ -11,10 +11,10 @@ lang: en
 # Fill in the protocol & hostname for your site.
 # E.g. 'https://username.github.io', note that it does not end with a '/'.
 url: 'https://null-Exception1.github.io' # Replace USERNAME with your github username
-title: 'My Awesome Blog'
-tagline: 'A clean start.'
-description: 'Your blog description goes here.'
-author: 'Your Name'
+title: 'My blog'
+tagline: 'some 17 yr old kid tryna build stuff'
+description: ''
+author: 'Shaurya Pratap Srivastava'
 
 github:
   username: null-Exception1 # change to your GitHub username
