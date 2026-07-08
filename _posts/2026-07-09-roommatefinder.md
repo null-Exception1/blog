@@ -737,7 +737,7 @@ func CacheUpdate(){
 
 You see this is not a good idea when you check benchmarks - time for cache fetching went **UP** instead because of the sheer amount of locking we started doing for reading, added on with our bottleneck that i discovered later to be **JSON.Marshal**
 
-### Environment
+Environment
 - **OS**: Linux  
 - **Arch**: amd64  
 - **CPU**: Intel(R) Core(TM) i7-9750H @ 2.60GHz  
@@ -745,20 +745,18 @@ You see this is not a good idea when you check benchmarks - time for cache fetch
 
 ---
 
-### Without Caching
-| Benchmark                  | Iterations    | Time/op      | Bytes/op | Allocs/op |
-|----------------------------|---------------|--------------|----------|-----------|
-| **BlocksHandler**          | 2877          | 388,047 ns   | 258,546  | 2207      |
-| **RoomsBlocksHandler**     | 1,000,000,000 | 0.0009717 ns | 0        | 0         |
-
+Without Caching
+| Benchmark | Iterations | Time/op | Bytes/op | Allocs/op |
+| :--- | :---: | :---: | :---: | :---: |
+| **BlocksHandler** | 2,877 | 388,047 ns | 258,546 | 2,207 |
+| **RoomsBlocksHandler** | 1,000,000,000 | 0.0009717 ns | 0 | 0 |
 ---
 
-### With Caching
-| Benchmark                  | Iterations    | Time/op      | Bytes/op   | Allocs/op |
-|----------------------------|---------------|--------------|------------|-----------|
-| **BlocksHandler**          | 28            | 54,649,916 ns | 17,629,019 | 459,798   |
-| **RoomsBlocksHandler**     | 1,000,000,000 | 0.02232 ns  | 0          | 0         |
-
+With Caching
+| Benchmark | Iterations | Time/op | Bytes/op | Allocs/op |
+| :--- | :---: | :---: | :---: | :---: |
+| **BlocksHandler** | 28 | 54,649,916 ns | 17,629,019 | 459,798 |
+| **RoomsBlocksHandler** | 1,000,000,000 | 0.02232 ns | 0 | 0 |
 ---
 
 Infact the first time i tried caching, the ns/op went up, although the time was still lower than going for a fetch.
@@ -803,18 +801,20 @@ And then the thing took off like a rocket:
 
 ### Without Caching
 
-| Benchmark                  | Iterations | Time/op      | Bytes/op | Allocs/op |
-|----------------------------|------------|--------------|----------|-----------|
-| **BlocksHandler**          | 2877       | 388,047 ns   | 258,546  | 2207      |
-| **RoomsBlocksHandler**     | 1,000,000,000 | 0.0009717 ns | 0        | 0         |
+| Benchmark | Iterations | Time/op | Bytes/op | Allocs/op |
+| :--- | :---: | :---: | :---: | :---: |
+| **BlocksHandler** | 2877 | 388,047 ns | 258,546 | 2207 |
+| **RoomsBlocksHandler** | 1,000,000,000 | 0.0009717 ns | 0 | 0 |
 
 ---
 
 ### With Caching
-| Benchmark                  | Iterations | Time/op       | Bytes/op   | Allocs/op |
-|----------------------------|------------|---------------|------------|-----------|
-| **BlocksHandler**          | 28         | 54,649,916 ns | 17,629,019 | 459,798   |
-| **RoomsBlocksHandler**     | 1,000,000,000 | 0.02232 ns  | 0          | 0         |
+
+| Benchmark | Iterations | Time/op | Bytes/op | Allocs/op |
+| :--- | :--- | :--- | :--- | :--- |
+| BlocksHandler | 28 | 54,649,916 ns | 17,629,019 | 459,798 |
+| RoomsBlocksHandler | 1,000,000,000 | 0.02232 ns | 0 | 0 |
+
 
 ---
 
