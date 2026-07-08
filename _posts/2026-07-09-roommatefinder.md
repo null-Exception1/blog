@@ -139,6 +139,9 @@ type  Room  struct {
 People []*Person
 }
 ```
+
+## Privacy 
+
 Before you yell at me - **NO, I was not going to use raw admission numbers from our university**. That would defeat the point of their privacy, and since our university isn't linked to the site in any way officially, that would mean data exposition would lead to some shady shit.
 
 Instead my plan was this - Let's just hash the admission number, before it even hits the database, or the backend.
@@ -158,11 +161,200 @@ Yeah, this is why.
 So the reason why it was purely written as "Admnno" in the struct was because i hadn't quite got to hashing yet, and i was operating under admnno for the duration of testing.
 
 
+## Block
+
+```go
+Block := make(map[string]*structs.Block, 0)
+
+for _, row := range rows {
+	if _, ok := Occupancies[row.Blockno]; ok {
+		Occupancies[row.Blockno][row.Roomno] = Occupancies[row.Blockno][row.Roomno] + 1
+	} else {
+		Occupancies[row.Blockno] = make(map[string]int, 0)
+		Occupancies[row.Blockno][row.Roomno] = 1
+	}
+}
+
+for key := range Occupancies {
+	Block[key] = &structs.Block{Partial: 0, Full: 0}
+	for _, occupancy := range Occupancies[key] {
+		if occupancy >= 2 { // remind me to check the occupancy max limit later
+			Block[key].Full = Block[key].Full + 1
+		} else {
+			Block[key].Partial = Block[key].Partial + 1
+		}
+	}
+}
+```
+Honestly one of the more simpler ways would've been to experiment with Querying methods, which could've been cleaner but I felt like i wanted to rely more on my Go backend for this particular project.
+
+It is objectively faster to do this level of filtering with a well formed SQL query but ya know... there's other stuff i want to add.
 
 ## Version 2: Sessions and Login
 
->So the idea is simple, as soon as a user logs in or registers, give them a session ID cookie which for the duration of validity can be used to automatically stay logged in
+>So the idea is simple, as soon as a user logs in or registers, give them a session ID cookie which for the duration of validity can be used to automatically stay logged in. You send a /verify to verify the token everytime you visit the site.
 
 Easy to say, hard to manage.
 
 The main problem was the CORS that absolutely refused the living hell out of placing a cookie on a god forbid user.
+
+Infact, i forgot that the Response was also sending back headers and the browser actually checks them?
+
+```go
+func Verify(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Content-Type", "application/text")
+```
+
+If you don't do this, it throws CORS error, because browsers will allow you to send data to that resources but if it doesn't send the right headers back, it could be malicious. So browsers invented a genius way to protect the user - which involved blocking the site altogether, leading me to try to figure out what the hell is going wrong for an hour straight.
+
+I've dealt with CORS while working on javascript projects before, but i hate the fact that some random headers that look kind of useless on the outside have massive implications on the browser.
+
+Another thing while learning this realisation was that Server components in React are asynchronous, while Client components are synchronous. This was intuitive to me but came as a shock to me.
+
+```jsx
+
+useEffect(() => {
+    fetch("http://localhost:8080/verify", { credentials: "include" })
+      .then(res => res.text())
+      .then(data => setValid(data === "valid"))
+      .catch(() => setValid(false));
+  }, []);
+```
+*Client module*
+
+
+```jsx
+const { id } = await params; // Await params directly on the server
+const res = await fetch(`http://localhost:8080/rooms?block=${id}`);
+const loaded_data = await res.json();
+```
+*Server module*
+
+The main fact is that server components have the indispensable ability to just wait it out.
+
+## Logging
+
+Generally logging is not my specialty. Neither is keeping track of explaining my code. But i'm trying to level up my production level game, and that requires me to debug my code. Golang is notoriously hard to debug compared to Python simply because the errors make absolutely zero sense sometimes.
+
+```go
+func Blocks(w http.ResponseWriter, req *http.Request) {
+
+	logrus.WithFields(logrus.Fields{
+		"package":  "handlers",
+		"endpoint": "/blocks",
+		"method":   req.Method,
+		"remote":   req.RemoteAddr,
+	}).Info("requested /blocks by ", req.RemoteAddr)
+
+	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Content-Type", "application/text")
+
+	Occupancies := make(map[string]map[string]int, 0)
+	rows := db.Query("SELECT * FROM people", globals.Globaldb)
+
+	logrus.WithFields(logrus.Fields{
+		"package":  "handlers",
+		"endpoint": "/blocks",
+		"rows":     len(rows),
+		"method":   req.Method,
+		"remote":   req.RemoteAddr,
+	}).Info("fetched rows from postgres db")
+
+	for _, row := range rows {
+		if _, ok := Occupancies[row.Blockno]; ok {
+			Occupancies[row.Blockno][row.Roomno] = Occupancies[row.Blockno][row.Roomno] + 1
+		} else {
+			Occupancies[row.Blockno] = make(map[string]int, 0)
+			Occupancies[row.Blockno][row.Roomno] = 1
+		}
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"package":     "handlers",
+		"endpoint":    "/blocks",
+		"occupancies": len(Occupancies),
+		"method":      req.Method,
+		"remote":      req.RemoteAddr,
+	}).Debug("made occupancies map")
+
+	Block := make(map[string]*structs.Block, 0)
+
+	for key := range Occupancies {
+		Block[key] = &structs.Block{Partial: 0, Full: 0}
+		for _, occupancy := range Occupancies[key] {
+			if occupancy >= 2 { // remind me to check the occupancy max limit later
+				Block[key].Full = Block[key].Full + 1
+			} else {
+				Block[key].Partial = Block[key].Partial + 1
+			}
+		}
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"package":  "handlers",
+		"endpoint": "/blocks",
+		"blocks":   len(Block),
+		"method":   req.Method,
+		"remote":   req.RemoteAddr,
+	}).Debug("made blocks map")
+
+	str, err := json.Marshal(Block)
+
+	if err != nil {
+		logrus.WithFields(logrus.Fields{
+			"package":   "handlers",
+			"endpoint":  "/blocks",
+			"jsonified": len(str),
+			"method":    req.Method,
+			"remote":    req.RemoteAddr,
+		}).Error("error in JSON.Marshal")
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"package":   "handlers",
+		"endpoint":  "/blocks",
+		"jsonified": len(str),
+		"status":    http.StatusOK,
+		"method":    req.Method,
+		"remote":    req.RemoteAddr,
+	}).Info("response sent")
+
+	fmt.Fprintf(w, "%s", string(str))
+}
+```
+
+There's different levels of logging as far as i could tell, i only needed 4 - **Info**, **Debug**, **Error**, **Fatal**
+
+There was also **Trace** but i don't think i was coding anything that big in size for me to have to trace back to anything.
+
+So now, our logs look like this -
+
+```
+INFO[2026-07-08T18:40:37Z] requested /blocks by [::1]:48478              endpoint=/blocks method=GET package=handlers remote="[::1]:48478"
+DEBU[2026-07-08T18:40:37Z] fetch query recieved, making results..        function=query package=db
+DEBU[2026-07-08T18:40:37Z] returning results from query...               function=query package=db results=7
+DEBU[2026-07-08T18:40:37Z] fetched rows from postgres db                 endpoint=/blocks package=caching
+DEBU[2026-07-08T18:40:37Z] made occupancies map                          endpoint=/blocks occupancies=5 package=caching
+DEBU[2026-07-08T18:40:37Z] made blocks map                               blocks=5 endpoint=/blocks package=caching
+DEBU[2026-07-08T18:40:37Z] updating the cache..                          blocks=5 endpoint=/blocks package=caching
+DEBU[2026-07-08T18:40:37Z] updated the cache.                            cache=5 package=caching
+DEBU[2026-07-08T18:40:37Z] CACHE MISS!                                  
+INFO[2026-07-08T18:40:37Z] response sent                                 endpoint=/blocks jsonified=140 method=GET package=handlers remote="[::1]:48478" status=200
+DEBU[2026-07-08T18:40:37Z] checking session in db                        endpoint=/verify method=GET package=handlers
+INFO[2026-07-08T18:40:37Z] no matching session found in db               endpoint=/verify package=handlers token=a452f271b62de95d2bc7af2a3cb45d53
+DEBU[2026-07-08T18:40:38Z] checking session in db                        endpoint=/verify method=GET package=handlers
+INFO[2026-07-08T18:40:38Z] requested /blocks by [::1]:48476              endpoint=/blocks method=GET package=handlers remote="[::1]:48476"
+DEBU[2026-07-08T18:40:38Z] CACHE HIT!                                   
+INFO[2026-07-08T18:40:38Z] response sent                                 endpoint=/blocks jsonified=140 method=GET package=handlers remote="[::1]:48476" status=200
+INFO[2026-07-08T18:40:38Z] no matching session found in db               endpoint=/verify package=handlers token=a452f271b62de95d2bc7af2a3cb45d53
+```
+
+I know.. it looks amazing. 
+
