@@ -1,8 +1,4 @@
 ---
-title: Hello World
-date: 2026-07-09 00:00:00 +0000
-categories: [Blogging, Intro]
-tags: [welcome]
+title: My First Post
+date: 2026-07-08 00:00:00 +0000
 ---
-
-Your post content goes here using standard Markdown syntax!
