@@ -1,6 +1,6 @@
 ---
 title: A custom x86 mini assembly emulator (and why i made it)
-date: 2026-07-08 00:00:00 +0000
+date: 2026-07-24 00:00:00 +0000
 categories: [Development, Go]
 tags:
   - low level
